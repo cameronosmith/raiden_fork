@@ -41,6 +41,36 @@ See the **[Installation guide](https://tri-ml.github.io/raiden/guide/installatio
 
 Run `rd <command> --help` for all options.
 
+## Fork notes — fiducial board calibration
+
+This fork (cameronosmith/raiden_fork) is the version used for our YAM
+recording and inference work. It includes the print assets and 3D-print
+file for the fiducial board mounted on the YAM base.
+
+**Print assets** (in `calibration_assets/`):
+
+- `aruco_board.png` — the ChArUco/ArUco board image. Print at the
+  scale that matches the marker size used in `raiden/calibration/`.
+- `yam_base_board_v2.stl` — 3D-print file for the board mount that
+  attaches the printed sheet to the YAM base plate. Source XML for the
+  full board+mount lives at
+  `third_party/exo_redo/so100_blender_testings/` and
+  `third_party/exo_redo/ExoConfigs/exoskeleton.py`.
+
+**Calibration source files** (in `raiden/calibration/`):
+
+- `exo_calibrate.py` — main exo (scene-camera) calibration entry
+  point. Detects the board, solves the camera→board transform, locks
+  the scene-camera extrinsic to the YAM base frame.
+- `core.py` — board detection, PnP, and pose-refinement math shared
+  across exo + wrist calibration.
+- `wrist_calibrate.py` — hand-eye calibration for the wrist cameras
+  (uses arm joint readings + per-frame board detections).
+- `wrist_verify_rerun.py` — live rerun visualization to sanity-check a
+  wrist-calibration result by overlaying the rendered arm.
+- `recorder.py` / `runner.py` — capture loop + CLI plumbing for the
+  `rd record_calibration_poses` and `rd calibrate` commands.
+
 ## Roadmap
 
 The following features are coming soon:

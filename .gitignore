@@ -139,3 +139,5 @@ data/
 third_party/Fast-FoundationStereo/
 config/
 weights/
+*.DS_Store
+._*

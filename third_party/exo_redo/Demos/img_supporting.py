@@ -1,0 +1,89 @@
+"""Estimate robot state from a single image.
+
+This demo shows how to:
+1. Load an RGB image
+2. Detect ArUco markers
+3. Estimate robot joint configuration
+4. Render the estimated pose alongside the original image
+"""
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+import mujoco
+import matplotlib.pyplot as plt
+import numpy as np
+from mujoco.renderer import Renderer
+
+from ExoConfigs import EXOSKELETON_CONFIGS
+from ExoConfigs.alignment_board import ALIGNMENT_BOARD_CONFIG
+from exo_utils import estimate_robot_state, detect_and_set_link_poses, position_exoskeleton_meshes, render_from_camera_pose, get_link_poses_from_robot, combine_xmls, detect_and_position_alignment_board
+
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument("--exo", type=str, default="so100_holemounts", 
+                   choices=list(EXOSKELETON_CONFIGS.keys()),
+                   help="Exoskeleton configuration to use")
+parser.add_argument("--just_sim_state", action="store_true", help="cam rerender but dont reset config")
+parser.add_argument("--no_render", action="store_true", help="just render arm in sim")
+args = parser.parse_args()
+
+#robot_config = EXOSKELETON_CONFIGS[args.exo]
+
+from ExoConfigs.so100_holemounts import SO100HoleMountsConfig
+SO100HoleMountsConfig.exo_alpha = 0.2
+SO100HoleMountsConfig.aruco_alpha = 0.2  # Set to 0.
+robot_config = SO100HoleMountsConfig()
+
+print(f"Using exoskeleton config: {args.exo} ({robot_config.name})")
+#image_path = '../redo_mujoco_calibration/random/tmpimgs/pretty_robot.png'
+image_path = "scratch/randimgs/helper1.png"
+
+# Load model from config
+model = mujoco.MjModel.from_xml_string(combine_xmls(robot_config.xml, ALIGNMENT_BOARD_CONFIG.get_xml_addition()))
+data = mujoco.MjData(model)
+
+# Set virtual robot state from image
+if not args.just_sim_state:    
+    rgb = plt.imread(image_path)[..., :3]
+    if rgb.max() <= 1.0: rgb = (rgb * 255).astype(np.uint8)
+
+    # Detect link poses from ArUco markers
+    link_poses, camera_pose_world, cam_K, corners_cache,corners_vis,obj_img_pts = detect_and_set_link_poses(rgb, model, data, robot_config)
+    configuration = estimate_robot_state( model, data, robot_config, link_poses, ik_iterations=55)
+    data.qpos[:] = configuration.q
+    data.ctrl[:] = configuration.q[:len(data.ctrl)]
+    mujoco.mj_forward(model, data)
+    position_exoskeleton_meshes(robot_config, model, data, link_poses)
+    
+    # Detect and position alignment board
+    board_result = detect_and_position_alignment_board(rgb, model, data, ALIGNMENT_BOARD_CONFIG, cam_K, camera_pose_world, corners_cache, visualize=False)
+    if board_result is not None:
+        board_pose, board_pts = board_result
+        print(f"Alignment board detected at position: {board_pose[:3, 3]}")
+        # Add board points to obj_img_pts for VGGT alignment
+        obj_img_pts["alignment_board"] = board_pts
+        mujoco.mj_forward(model, data)  # Update scene with board position
+    else:
+        print("Warning: Alignment board not detected in image")
+else:
+    link_poses = get_link_poses_from_robot(robot_config, model, data)
+    position_exoskeleton_meshes(robot_config, model, data, link_poses)
+    mujoco.mj_forward(model, data)
+
+# Render from estimated camera pose and show on top of image
+if not args.no_render:
+    rendered = render_from_camera_pose(model, data, camera_pose_world, cam_K, *rgb.shape[:2])
+    
+    # Display results
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    for ax, img in zip(axes, [rgb, rendered, (rgb * 0.5 + rendered * 0.5).astype(np.uint8)]): ax.imshow(img);ax.axis('off')
+    plt.tight_layout()
+    plt.show()
+# just Launch interactive viewer
+else:
+    print("\nLaunching interactive viewer...")
+    viewer = mujoco.viewer.launch_passive(model, data, show_left_ui=False, show_right_ui=False)
+    while viewer.is_running():
+        mujoco.mj_step(model, data)
+        viewer.sync()
